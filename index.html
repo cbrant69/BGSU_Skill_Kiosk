@@ -245,6 +245,12 @@ table.jobs td.num{text-align:right;font-weight:800;font-variant-numeric:tabular-
 .admin h4{font-size:15px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:22px 0 10px}
 .empty{padding:24px;text-align:center;color:var(--muted)}
 
+.link-btns,.staff-btns{display:none}
+body.linkmode .link-btns,body.staffmode .staff-btns{display:flex}
+body.linkmode .kiosk-btns,body.staffmode .kiosk-btns,body.linkmode .timer,body.staffmode .timer{display:none}
+body.linkmode .steps,body.linkmode .lock{visibility:hidden}
+a.btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.admin td .btn-sm{min-height:40px;padding:8px 14px;font-size:14px;white-space:nowrap}
 .toast{position:fixed;left:50%;bottom:calc(30px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:var(--brown);color:#fff;padding:14px 22px;border-radius:12px;font-weight:700;opacity:0;transition:all .25s;z-index:80;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
@@ -409,9 +415,17 @@ table.jobs td.num{text-align:right;font-weight:800;font-variant-numeric:tabular-
       <div class="timer-track"><span id="timerBar" style="width:100%"></span></div>
       <div class="timer-txt">Resetting for the next visitor in <span id="timerNum">90</span>s</div>
     </div>
-    <div class="btn-row">
+    <div class="btn-row kiosk-btns">
       <button class="btn btn-ghost" id="moreTime">More time</button>
       <button class="btn btn-primary" data-go="reset">I'm done</button>
+    </div>
+    <div class="btn-row link-btns">
+      <button class="btn btn-ghost" id="printBtn">Print or save as PDF</button>
+      <a class="btn btn-primary" id="progLink" href="#" target="_blank" rel="noopener">Explore BGSU Online programs</a>
+    </div>
+    <div class="btn-row staff-btns">
+      <button class="btn btn-ghost" id="copyLinkBtn">Copy this report link</button>
+      <button class="btn btn-primary" id="backPortal">Back to staff portal</button>
     </div>
   </section>
 </main>
@@ -437,6 +451,8 @@ var ADMIN_PIN = '1910';          // Staff PIN for the lock icon
 var IDLE_WARN_MS = 75000;        // Inactivity before "Still there?" prompt
 var IDLE_GRACE_S = 15;           // Seconds to respond before auto-reset
 var REPORT_RESET_S = 90;         // Report screen auto-reset
+var REPORT_URL = 'https://cbrant69.github.io/BGSU_Skill_Kiosk/';   // Live kiosk address, used to build each visitor's report link
+var PROGRAMS_URL = 'https://www.bgsu.edu/content/bgsu/en/online/academics.html';
 var KEY_LEADS = 'bgsu_wf_leads_v2';
 var KEY_PLAYS = 'bgsu_wf_plays_v2';
 var SOURCE_NOTE = 'Source: Lightcast Q4 2026 Job Posting Analytics, Ohio. 1,042,371 unique job postings from January 2024 to August 2026 that list an associate\'s or bachelor\'s degree, posted by 37,234 companies. Percentages show the share of those postings that mention each skill. Growth is Lightcast\'s projected skill growth. A skill can appear in more than one list (for example, Microsoft Excel is both a common and a computer skill).';
@@ -685,7 +701,7 @@ function submitLead(){
   var plays = load(KEY_PLAYS);
   plays.forEach(function(p){if(p.id===state.playId) p.lead=true;});
   save(KEY_PLAYS, plays);
-  renderReport(lead);
+  renderReport(lead, state.role, 'kiosk');
   go('report');
 }
 
@@ -699,9 +715,9 @@ function listHTML(title,rows,picked){
   }).join('')+'</div>';
 }
 var CAT_LABEL = {common:'Common',specialized:'Specialized',software:'Computer'};
-function renderReport(lead){
-  var role = state.role;
-  var date = new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+function renderReport(lead, role, mode){
+  role = role || state.role; mode = mode || 'kiosk';
+  var date = new Date(lead.ts || Date.now()).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
   var first = lead.name.split(' ')[0];
   var picked = lead.answers;
   var occMax = D.occs[0][1];
@@ -745,7 +761,9 @@ function renderReport(lead){
       '<div><h2>BGSU Online programs that build these skills</h2><ul class="paths">'+paths+'</ul></div>'+
     '</div>'+
     '<div class="next-wrap"><div><h2>Your next step</h2>'+
-    '<p class="next">A BGSU Online team member will email a copy of this report to <b>'+esc(lead.email)+'</b>, along with resources for your '+esc(role.audience)+'.</p>'+
+    (mode==='kiosk'
+      ? '<p class="next">A BGSU Online team member will email a link to this report to <b>'+esc(lead.email)+'</b>, along with resources for your '+esc(role.audience)+'.</p>'
+      : '<p class="next">Thank you for visiting BGSU Online. A team member will follow up with resources for your '+esc(role.audience)+'. Questions or partnership ideas? Reply to the email that brought you here.</p>')+
     '<p class="next" style="margin-top:10px">Scan the code to explore all BGSU Online programs, or visit <b>bgsu.edu/online</b>.</p></div>'+
     '<div class="qr-box">'+QR_SVG+'<span>Explore BGSU Online programs</span></div></div>'+
     '<div class="src">'+esc(SOURCE_NOTE)+'</div>';
@@ -768,8 +786,61 @@ function stopReportTimer(){if(reportT){clearInterval(reportT);reportT=null;}}
 $('#moreTime').addEventListener('click',function(){reportLeft=Math.min(reportLeft+60,240);tickReport();});
 $('#app').addEventListener('scroll',function(){ if(current==='report' && reportLeft<30){reportLeft=30;tickReport();} },{passive:true});
 
+/* ================= REPORT LINKS ================= */
+/* Each lead's report can be rebuilt from a short link: role, answers, name, title, organization, and date. No email is stored in the link. */
+function roleByName(n){for(var i=0;i<ROLES.length;i++){if(ROLES[i].name===n)return ROLES[i];}return ROLES[3];}
+function localDate(ts){var d=new Date(ts||Date.now());return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function reportLink(l){
+  var a = ROUNDS.map(function(r,i){
+    var ans = (l.answers||[])[i];
+    for(var j=0;j<r.opts.length;j++){if(r.opts[j][0]===ans)return String(j);}
+    return 'x';
+  }).join('');
+  var q = new URLSearchParams({r:roleByName(l.role).id, a:a, n:l.name||'', t:l.title||'', o:l.org||'', d:localDate(l.ts)});
+  return REPORT_URL+'#report?'+q.toString();
+}
+function leadFromHash(){
+  var h = location.hash||'';
+  if(h.indexOf('#report?')!==0) return null;
+  var q = new URLSearchParams(h.slice(8));
+  var a = q.get('a')||'';
+  if(!/^[0-3x]{4}$/.test(a)) return null;
+  var answers = ROUNDS.map(function(r,i){var c=a.charAt(i);return c==='x'?'':r.opts[+c][0];});
+  var d = q.get('d'); var ts = /^\d{4}-\d{2}-\d{2}$/.test(d||'') ? d+'T12:00:00' : new Date().toISOString();
+  return {lead:{name:(q.get('n')||'Friend').slice(0,80), title:(q.get('t')||'').slice(0,80), org:(q.get('o')||'').slice(0,120), ts:ts,
+    answers:answers, score:answers.filter(function(x,i){return x===ROUNDS[i].opts[0][0];}).length}, role:roleById(q.get('r'))};
+}
+function showReportOnly(){
+  $all('.screen').forEach(function(s){s.classList.toggle('active', s.id==='s-report');});
+  current = 'report'; stopReportTimer(); $('#app').scrollTop = 0;
+}
+$('#progLink').setAttribute('href', PROGRAMS_URL);
+$('#printBtn').addEventListener('click',function(){window.print();});
+var staffLead = null;
+function viewLeadReport(id){
+  var l = load(KEY_LEADS).filter(function(x){return x.id===id;})[0]; if(!l) return;
+  staffLead = l;
+  closeAdmin();
+  document.body.classList.add('staffmode');
+  renderReport(l, roleByName(l.role), 'staff');
+  showReportOnly();
+}
+$('#copyLinkBtn').addEventListener('click',function(){ if(staffLead) copyText(reportLink(staffLead)); });
+$('#backPortal').addEventListener('click',function(){
+  document.body.classList.remove('staffmode'); staffLead = null;
+  resetAll(); openAdmin();
+});
+(function initLinkMode(){
+  var x = leadFromHash(); if(!x) return;
+  document.body.classList.add('linkmode');
+  document.title = 'Your Ohio Workforce Skills Report | BGSU Online';
+  renderReport(x.lead, x.role, 'link');
+  showReportOnly();
+})();
+
 /* ================= RESET ================= */
 function resetAll(){
+  if(document.body.classList.contains('linkmode')) return;
   closeModal();
   state = freshState();
   ['#fName','#fEmail','#fOrg','#fTitle'].forEach(function(s){$(s).value='';});
@@ -885,9 +956,9 @@ function renderAdmin(){
   html += '<h4>Leads (newest first)</h4><div class="tbl-wrap">';
   if(!leads.length){html += '<div class="empty">No leads yet.</div>';}
   else{
-    html += '<table><thead><tr><th>Time</th><th>Name</th><th>Email</th><th>Organization</th><th>Title</th><th>Role</th><th>Score</th><th>Interests</th></tr></thead><tbody>'+
+    html += '<table><thead><tr><th>Time</th><th>Name</th><th>Email</th><th>Organization</th><th>Title</th><th>Role</th><th>Score</th><th>Interests</th><th>Report</th></tr></thead><tbody>'+
       leads.slice().reverse().map(function(l){
-        return '<tr><td>'+esc(fmtTime(l.ts))+'</td><td>'+esc(l.name)+'</td><td>'+esc(l.email)+'</td><td>'+esc(l.org)+'</td><td>'+esc(l.title)+'</td><td>'+esc(l.role)+'</td><td>'+l.score+'/4</td><td>'+esc(l.interests.join('; '))+'</td></tr>';
+        return '<tr><td>'+esc(fmtTime(l.ts))+'</td><td>'+esc(l.name)+'</td><td>'+esc(l.email)+'</td><td>'+esc(l.org)+'</td><td>'+esc(l.title)+'</td><td>'+esc(l.role)+'</td><td>'+l.score+'/4</td><td>'+esc(l.interests.join('; '))+'</td><td><button class="btn btn-ghost btn-sm" data-act="view" data-id="'+esc(l.id)+'">View report</button></td></tr>';
       }).join('')+'</tbody></table>';
   }
   html += '</div>';
@@ -916,8 +987,8 @@ function cell(v){
 }
 function toCSV(rows){return rows.map(function(r){return r.map(cell).join(',');}).join('\r\n');}
 function leadsCSV(){
-  return toCSV([['Timestamp','Name','Email','Organization','Job Title','Role','Common Skill Answer','Specialized Skill Answer','Computer Skill Answer','Occupation Answer','Score (of 4)','Interests','Contact Consent']]
-    .concat(load(KEY_LEADS).map(function(l){var a=l.answers||[];return [new Date(l.ts).toLocaleString('en-US'),l.name,l.email,l.org,l.title,l.role,a[0],a[1],a[2],a[3],l.score,l.interests.join('; '),l.consent];})));
+  return toCSV([['Timestamp','First Name','Name','Email','Organization','Job Title','Role','Common Skill Answer','Specialized Skill Answer','Computer Skill Answer','Occupation Answer','Score (of 4)','Interests','Contact Consent','Report Link']]
+    .concat(load(KEY_LEADS).map(function(l){var a=l.answers||[];return [new Date(l.ts).toLocaleString('en-US'),l.name.split(' ')[0],l.name,l.email,l.org,l.title,l.role,a[0],a[1],a[2],a[3],l.score,l.interests.join('; '),l.consent,reportLink(l)];})));
 }
 function playsCSV(){
   return toCSV([['Timestamp','Role','Common Skill Answer','Specialized Skill Answer','Computer Skill Answer','Occupation Answer','Score (of 4)','Became Lead']]
@@ -964,6 +1035,7 @@ $('#admin').addEventListener('click',function(e){
   var b=e.target.closest('[data-act]'); if(!b) return;
   var act=b.getAttribute('data-act');
   if(act==='close') closeAdmin();
+  else if(act==='view') viewLeadReport(b.getAttribute('data-id'));
   else if(act==='dl-leads') download(leadsCSV(),'BGSU_Workforce_Leads_'+stamp()+'.csv');
   else if(act==='dl-plays') download(playsCSV(),'BGSU_Workforce_Activity_'+stamp()+'.csv');
   else if(act==='copy') copyText(leadsCSV());
