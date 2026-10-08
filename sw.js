@@ -1,5 +1,5 @@
 // Offline cache for the BGSU workforce kiosk. Change VERSION whenever you upload new files.
-var VERSION = 'bgsu-workforce-v2';
+var VERSION = 'bgsu-workforce-v3';
 var FILES = ['./', 'index.html', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', function (e) {
